@@ -111,9 +111,9 @@ private struct StatusView: View {
     /// The icon, the server's name, and the button.
     private var tile: some View {
         VStack(alignment: .leading) {
-            RouteIcon()
+            MarkIcon()
                 .foregroundStyle(isConnected ? .green : .primary)
-                .frame(width: 26, height: 26)
+                .frame(width: 20, height: 24)
                 .widgetAccentable()
             Spacer(minLength: 4)
             Text(entry.name)
@@ -162,8 +162,8 @@ private struct StatusView: View {
         if entry.state == .notSetUp {
             ZStack {
                 AccessoryWidgetBackground()
-                RouteIcon()
-                    .padding(12)
+                MarkIcon()
+                    .padding(14)
             }
         } else {
             toggle {
@@ -171,13 +171,13 @@ private struct StatusView: View {
                     if isConnected {
                         Circle()
                             .widgetAccentable()
-                        RouteIcon()
-                            .padding(12)
+                        MarkIcon()
+                            .padding(14)
                             .blendMode(.destinationOut)
                     } else {
                         AccessoryWidgetBackground()
-                        RouteIcon()
-                            .padding(12)
+                        MarkIcon()
+                            .padding(14)
                     }
                 }
                 .compositingGroup()

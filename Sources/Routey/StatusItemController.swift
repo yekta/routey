@@ -28,7 +28,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, NSPopoverDelegate {
         menu.delegate = self
 
         guard let button = item.button else { return }
-        button.image = LucideRoute.image()
+        button.image = RouteyMark.image()
         button.target = self
         button.action = #selector(clicked(_:))
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
