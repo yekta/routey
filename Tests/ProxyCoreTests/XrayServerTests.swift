@@ -211,4 +211,118 @@ struct XrayServerTests {
         await #expect(throws: TLSError.self) { try await readAll(tunnel, on: queue, count: 5) }
         queue.sync { tunnel.cancel() }
     }
+
+    /// A server that hangs up during the handshake is asked again on a new connection.
+    @Test func retriesAHandshakeTheServerCuts() async throws {
+        guard #available(macOS 26.0, *) else { return }
+        let echo = try EchoServer()
+        let xray = try XrayProcess(x25519Only: false)
+        for link in [xray.plainLink, xray.visionLink] {
+            let doorman = try Doorman(forwardingTo: VLESSServer(link: link).port, hangingUpOn: 2)
+            let queue = DispatchQueue(label: "tunnel")
+            let tunnel = try VLESSConnection(server: VLESSServer(link: doorman.link(from: link)), target: Address(name: "127.0.0.1", port: echo.port), command: .tcp, queue: queue)
+            queue.sync { tunnel.start(sending: Data("hello".utf8)) }
+            #expect(try await readAll(tunnel, on: queue, count: 5) == Data("hello".utf8))
+            #expect(doorman.connections == 3)
+            queue.sync { tunnel.cancel() }
+        }
+    }
+
+    /// Past its last try, the error says the server hung up during the handshake.
+    @Test func givesUpOnAServerThatKeepsHangingUp() async throws {
+        guard #available(macOS 26.0, *) else { return }
+        let echo = try EchoServer()
+        let xray = try XrayProcess(x25519Only: false)
+        let doorman = try Doorman(forwardingTo: VLESSServer(link: xray.plainLink).port, hangingUpOn: 10)
+        let queue = DispatchQueue(label: "tunnel")
+        let tunnel = try VLESSConnection(server: VLESSServer(link: doorman.link(from: xray.plainLink)), target: Address(name: "127.0.0.1", port: echo.port), command: .tcp, queue: queue)
+        queue.sync { tunnel.start(sending: Data("hello".utf8)) }
+        await #expect(throws: (any Error).self) { try await readAll(tunnel, on: queue, count: 5) }
+        #expect(doorman.connections == 3)
+        queue.sync { tunnel.cancel() }
+    }
+
+    /// Every query goes over one connection, each answer to its own query even when the apps
+    /// picked the same ID. The echo server stands in for the resolver: its answers are the queries.
+    @Test(arguments: [false, true])
+    func dnsSharesOneConnection(vision: Bool) async throws {
+        guard #available(macOS 26.0, *) else { return }
+        let echo = try EchoServer()
+        let xray = try XrayProcess(x25519Only: false)
+        let link = vision ? xray.visionLink : xray.plainLink
+        let doorman = try Doorman(forwardingTo: VLESSServer(link: link).port, hangingUpOn: 0)
+        let resolver = try DNSResolver(upstream: .vless(VLESSServer(link: doorman.link(from: link))), resolver: Address(name: "127.0.0.1", port: echo.port))
+        let queries = (0..<50).map { _ in Data([0x12, 0x34]) + randomBytes(40) }
+        let answers = await withTaskGroup(of: (Data, Data?).self) { group in
+            for query in queries {
+                group.addTask {
+                    await withCheckedContinuation { continuation in
+                        resolver.resolve(query) { continuation.resume(returning: (query, $0)) }
+                    }
+                }
+            }
+            return await group.reduce(into: []) { $0.append($1) }
+        }
+        #expect(answers.count == queries.count)
+        #expect(answers.allSatisfy { $0.0 == $0.1 })
+        #expect(doorman.connections == 1)
+        resolver.cancel()
+    }
+}
+
+/// Stands in front of a server: hangs up on the first few connections once they have sent
+/// something, and passes the rest through. Counts them.
+private final class Doorman {
+    let port: UInt16
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "doorman")
+    private var count = 0
+
+    var connections: Int { queue.sync { count } }
+
+    init(forwardingTo serverPort: UInt16, hangingUpOn hangUps: Int) throws {
+        port = freePort()
+        listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: port)!)
+        listener.newConnectionHandler = { [queue, weak self] client in
+            guard let self else { return }
+            self.count += 1
+            client.start(queue: queue)
+            guard self.count > hangUps else {
+                client.receive(minimumIncompleteLength: 1, maximumLength: 65536) { _, _, _, _ in
+                    client.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { _ in
+                        client.cancel()
+                    })
+                }
+                return
+            }
+            let server = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: serverPort)!, using: .tcp)
+            server.start(queue: queue)
+            Self.pipe(client, to: server)
+            Self.pipe(server, to: client)
+        }
+        listener.start(queue: queue)
+        Thread.sleep(forTimeInterval: 0.2)
+    }
+
+    deinit {
+        listener.cancel()
+    }
+
+    /// The same link, through here.
+    func link(from link: String) -> String {
+        link.replacingOccurrences(of: #"@127\.0\.0\.1:\d+"#, with: "@127.0.0.1:\(port)", options: .regularExpression)
+    }
+
+    private static func pipe(_ from: NWConnection, to: NWConnection) {
+        from.receive(minimumIncompleteLength: 1, maximumLength: 65536) { content, _, isComplete, error in
+            if let content {
+                to.send(content: content, completion: .idempotent)
+            }
+            guard !isComplete, error == nil else {
+                to.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .idempotent)
+                return
+            }
+            pipe(from, to: to)
+        }
+    }
 }

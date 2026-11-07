@@ -141,8 +141,8 @@ final class TCPRelay: Closable {
     }
 }
 
-/// One app's UDP socket, its datagrams carried through the server to wherever each one goes, and
-/// DNS asked of a public resolver through the server. Ends after a while without datagrams.
+/// One app's UDP socket, its datagrams carried through the server to wherever each one goes. Ends
+/// after a while without datagrams.
 final class UDPRelay: Closable {
     private static let idleTimeout: TimeInterval = 120
 
@@ -152,7 +152,6 @@ final class UDPRelay: Closable {
     private weak var events: RelayEvents?
     private let queue = DispatchQueue(label: "udp-relay")
     private var tunnel: DatagramTunnel?
-    private var lookups: [ObjectIdentifier: DNSLookup] = [:]
     private var lastActivity = Date()
     private var idleTimer: DispatchSourceTimer?
     private var closed = false
@@ -182,14 +181,11 @@ final class UDPRelay: Closable {
             guard !closed else { return }
             lastActivity = Date()
             events?.relayed(sent: datagram.payload.count, received: 0)
-            guard datagram.destination.port != 53 else {
-                return resolve(datagram.payload, askedOf: datagram.destination)
-            }
             packets().send(datagram.payload, to: datagram.destination)
         }
     }
 
-    /// The tunnel, opened with the first datagram that isn't DNS.
+    /// The tunnel, opened with the first datagram.
     private func packets() -> DatagramTunnel {
         if let tunnel {
             return tunnel
@@ -213,19 +209,6 @@ final class UDPRelay: Closable {
         lastActivity = Date()
         events?.relayed(sent: 0, received: payload.count)
         stack.send(UDPDatagram(source: origin, destination: source, payload: payload))
-    }
-
-    /// The answer comes back as if from the server the app asked.
-    private func resolve(_ query: Data, askedOf origin: Address) {
-        let lookup = DNSLookup(upstream: upstream, queue: queue)
-        let id = ObjectIdentifier(lookup)
-        lookups[id] = lookup
-        lookup.resolve(query) { [weak self] answer in
-            guard let self else { return }
-            self.lookups[id] = nil
-            guard let answer else { return }
-            self.deliver(answer, from: origin)
-        }
     }
 
     func close() {

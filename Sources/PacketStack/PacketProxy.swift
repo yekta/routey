@@ -17,6 +17,8 @@ public final class PacketProxy {
 
     private let stack = PacketStack()
     private let upstream: Upstream
+    /// The one connection all DNS goes through.
+    private let dns: DNSResolver
     private let state = OSAllocatedUnfairLock(initialState: State())
 
     private struct State {
@@ -27,6 +29,7 @@ public final class PacketProxy {
 
     public init(upstream: Upstream) {
         self.upstream = upstream
+        dns = DNSResolver(upstream: upstream)
         stack.onAccept = { [weak self] connection in self?.relay(connection) }
         stack.onDatagram = { [weak self] datagram in self?.relay(datagram) }
     }
@@ -46,6 +49,7 @@ public final class PacketProxy {
         for relay in relays {
             relay.close()
         }
+        dns.cancel()
         stack.stop()
     }
 
@@ -61,7 +65,7 @@ public final class PacketProxy {
     private func relay(_ connection: StackTCPConnection) {
         var target = connection.destination
         if target.port == 53, target == Address(name: Self.dnsServer, port: 53) {
-            target = DNSLookup.resolver
+            target = DNSResolver.resolver
         }
         guard !target.isLocal else { return connection.close() }
         let relay = TCPRelay(connection: connection, target: target, upstream: upstream, events: self)
@@ -70,7 +74,8 @@ public final class PacketProxy {
     }
 
     private func relay(_ datagram: UDPDatagram) {
-        guard !datagram.destination.isLocal || datagram.destination.port == 53 else { return }
+        guard datagram.destination.port != 53 else { return resolve(datagram) }
+        guard !datagram.destination.isLocal else { return }
         let relay = state.withLock { state -> UDPRelay? in
             if let relay = state.datagramRelays[datagram.source] {
                 return relay
@@ -83,6 +88,17 @@ public final class PacketProxy {
             return relay
         }
         relay?.send(datagram)
+    }
+
+    /// DNS, to wherever the app sent it, goes to the public resolver through the server; the
+    /// answer comes back as if from the one asked.
+    private func resolve(_ datagram: UDPDatagram) {
+        relayed(sent: datagram.payload.count, received: 0)
+        dns.resolve(datagram.payload) { [weak self] answer in
+            guard let self, let answer else { return }
+            self.relayed(sent: 0, received: answer.count)
+            self.stack.send(UDPDatagram(source: datagram.destination, destination: datagram.source, payload: answer))
+        }
     }
 
     private func retain(_ relay: Closable) {

@@ -150,17 +150,18 @@ final class UDPRelay: Closable {
     private weak var events: RelayEvents?
     private let queue = DispatchQueue(label: "udp-relay")
     private let upstream: Upstream
+    private let dns: DNSResolver
     private let tunnel: DatagramTunnel
-    private var lookups: [ObjectIdentifier: DNSLookup] = [:]
     private var directConnections: [Address: NWConnection] = [:]
     private var lastActivity = Date()
     private var idleTimer: DispatchSourceTimer?
     private var closed = false
 
-    init(flow: NEAppProxyUDPFlow, upstream: Upstream, events: RelayEvents) {
+    init(flow: NEAppProxyUDPFlow, upstream: Upstream, dns: DNSResolver, events: RelayEvents) {
         self.flow = flow
         self.events = events
         self.upstream = upstream
+        self.dns = dns
         tunnel = upstream.packets(queue: queue)
     }
 
@@ -227,14 +228,9 @@ final class UDPRelay: Closable {
     /// DNS goes through the server to a public resolver, whatever the app asked (often the router,
     /// whose answers for blocked names may be false). The answer comes back as if from the one asked.
     private func resolve(_ query: Data, askedOf origin: Address) {
-        let lookup = DNSLookup(upstream: upstream, queue: queue)
-        let id = ObjectIdentifier(lookup)
-        lookups[id] = lookup
-        lookup.resolve(query) { [weak self] answer in
-            guard let self else { return }
-            self.lookups[id] = nil
-            guard let answer else { return }
-            self.deliver(answer, from: origin)
+        dns.resolve(query) { [weak self] answer in
+            guard let self, let answer else { return }
+            self.queue.async { self.deliver(answer, from: origin) }
         }
     }
 
