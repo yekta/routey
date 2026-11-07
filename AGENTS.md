@@ -48,8 +48,10 @@ whose packets lwIP turns back into TCP connections, with widgets and a Control C
   or none), the same server at an IP resolved in advance, the request header, and Vision: padded
   blocks while the app's TLS shakes hands, then raw TCP once its TLS 1.3 carries data.
 - `VLESSTunnel.swift`: `VLESSConnection`, a TCP connection or one UDP target's packets through the
-  server, and `VLESSPacketTunnel`, a UDP flow with a connection per target.
-- `DNSLookup.swift`: a DNS query asked of 1.1.1.1 over TCP through either server.
+  server, connecting again (up to three times) when the server hangs up during the handshake; and
+  `VLESSPacketTunnel`, a UDP flow with a connection per target.
+- `DNSResolver.swift`: DNS asked of 1.1.1.1 over TCP through either server, every query on one
+  shared connection under an ID of its own, as other clients do, rather than a connection each.
 - `ProxyConfig.swift`: the config (Shadowsocks's link and the apps' bundle identifiers, which also
   match their helpers; VLESS's link; whether each is on), saved and imported as JSON, which also
   reads the files from before VLESS; which server a flow goes through; the messages between the
@@ -94,10 +96,10 @@ whose packets lwIP turns back into TCP connections, with widgets and a Control C
   the reader takes the data, so a slow server slows the app instead of filling memory.
 - `IPPacket.swift`: UDP datagrams read from IPv4 and IPv6 packets, and built back with checksums.
 - `Relays.swift`: the Mac's relays, over the stack: TCP waits briefly for the app's first data and
-  takes a TLS server name in it as the target; each app's UDP socket gets one relay, and DNS goes
-  to 1.1.1.1 through the server.
-- `PacketProxy.swift`: the stack, a relay for each connection and socket, and the totals. DNS sent
-  to the tunnel's own address (198.18.0.2) goes to the public resolver.
+  takes a TLS server name in it as the target; each app's UDP socket gets one relay.
+- `PacketProxy.swift`: the stack, a relay for each connection and socket, and the totals. DNS over
+  UDP, wherever it was sent, goes to 1.1.1.1 through the shared `DNSResolver` without a relay; DNS
+  over TCP sent to the tunnel's own address (198.18.0.2) goes to the public resolver.
 
 ### ios
 

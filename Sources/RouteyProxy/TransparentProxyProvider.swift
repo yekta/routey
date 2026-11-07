@@ -15,6 +15,9 @@ final class TransparentProxyProvider: NETransparentProxyProvider, NEAppProxyUDPF
         var config = ProxyConfig()
         var shadowsocks: Server?
         var vless: VLESSServer?
+        /// Each server's one connection for DNS.
+        var shadowsocksDNS: DNSResolver?
+        var vlessDNS: DNSResolver?
         var relays: [ObjectIdentifier: AnyObject] = [:]
         var stats = ProxyStats()
     }
@@ -38,6 +41,14 @@ final class TransparentProxyProvider: NETransparentProxyProvider, NEAppProxyUDPF
         for relay in relays {
             (relay as? Closable)?.close()
         }
+        let resolvers = state.withLock { state in
+            defer {
+                state.shadowsocksDNS = nil
+                state.vlessDNS = nil
+            }
+            return [state.shadowsocksDNS, state.vlessDNS]
+        }
+        resolvers.forEach { $0?.cancel() }
         completionHandler()
     }
 
@@ -56,9 +67,10 @@ final class TransparentProxyProvider: NETransparentProxyProvider, NEAppProxyUDPF
     }
 
     override func handleNewFlow(_ flow: NEAppProxyFlow) -> Bool {
-        guard let upstream = upstream(for: flow) else { return false }
+        guard let route = upstream(for: flow) else { return false }
+        let upstream = route.0
         if let udp = flow as? NEAppProxyUDPFlow {
-            return relay(udp, through: upstream)
+            return relay(udp, through: route)
         }
         guard let tcp = flow as? NEAppProxyTCPFlow,
               let target = Address(tcp.remoteFlowEndpoint), !target.isLocal else { return false }
@@ -70,33 +82,41 @@ final class TransparentProxyProvider: NETransparentProxyProvider, NEAppProxyUDPF
 
     func handleNewUDPFlow(_ flow: NEAppProxyUDPFlow, initialRemoteFlowEndpoint remoteEndpoint: Network.NWEndpoint) -> Bool {
         // DNS is taken even to the local network: the router's answers may be false.
-        guard let upstream = upstream(for: flow),
-              let target = Address(remoteEndpoint), !target.isLocal || target.port == 53 else { return false }
-        return relay(flow, through: upstream)
+        guard let target = Address(remoteEndpoint), !target.isLocal || target.port == 53 else { return false }
+        return relay(flow, through: upstream(for: flow))
     }
 
-    private func relay(_ flow: NEAppProxyUDPFlow, through upstream: Upstream) -> Bool {
-        let relay = UDPRelay(flow: flow, upstream: upstream, events: self)
+    private func relay(_ flow: NEAppProxyUDPFlow, through route: (Upstream, DNSResolver)?) -> Bool {
+        guard let (upstream, dns) = route else { return false }
+        let relay = UDPRelay(flow: flow, upstream: upstream, dns: dns, events: self)
         retain(relay, kind: upstream.kind)
         relay.start()
         return true
     }
 
-    private func upstream(for flow: NEAppProxyFlow) -> Upstream? {
+    /// The server a flow goes through, and its connection for DNS.
+    private func upstream(for flow: NEAppProxyFlow) -> (Upstream, DNSResolver)? {
         let identifier = flow.metaData.sourceAppSigningIdentifier
         return state.withLock { state in
-            state.config.upstream(for: identifier, shadowsocks: state.shadowsocks, vless: state.vless)
+            guard let upstream = state.config.upstream(for: identifier, shadowsocks: state.shadowsocks, vless: state.vless),
+                  let dns = upstream.kind == .shadowsocks ? state.shadowsocksDNS : state.vlessDNS else { return nil }
+            return (upstream, dns)
         }
     }
 
     private func apply(_ config: ProxyConfig) {
         let shadowsocks = try? Server(link: config.shadowsocks.server)
         let vless = try? VLESSServer(link: config.vless.server)
-        state.withLock { state in
+        let replaced = state.withLock { state in
+            let replaced = [state.shadowsocksDNS, state.vlessDNS]
             state.config = config
             state.shadowsocks = shadowsocks
             state.vless = vless
+            state.shadowsocksDNS = shadowsocks.map { DNSResolver(upstream: .shadowsocks($0)) }
+            state.vlessDNS = vless.map { DNSResolver(upstream: .vless($0)) }
+            return replaced
         }
+        replaced.forEach { $0?.cancel() }
     }
 
     private func retain(_ relay: AnyObject, kind: UpstreamKind) {

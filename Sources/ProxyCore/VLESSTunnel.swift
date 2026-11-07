@@ -6,7 +6,11 @@ import Network
 public final class VLESSConnection: StreamTunnel {
     public var onFailure: ((Error) -> Void)?
 
-    private let connection: NWConnection
+    /// How many times to connect when the server hangs up before the handshake is done.
+    private static let attempts = 3
+
+    private var connection: NWConnection
+    private var attempt = 1
     private let queue: DispatchQueue
     private let server: VLESSServer
     private let header: Data
@@ -32,10 +36,7 @@ public final class VLESSConnection: StreamTunnel {
     var isDirect: Bool { writesDirectly && readsDirectly }
 
     init(server: VLESSServer, target: Address, command: VLESSCommand, queue: DispatchQueue) {
-        let tcp = NWProtocolTCP.Options()
-        tcp.noDelay = true
-        tcp.connectionTimeout = 10
-        connection = NWConnection(to: server.address.endpoint, using: NWParameters(tls: nil, tcp: tcp))
+        connection = Self.connection(to: server)
         self.queue = queue
         self.server = server
         header = server.requestHeader(command, to: target)
@@ -44,29 +45,73 @@ public final class VLESSConnection: StreamTunnel {
         }
     }
 
+    private static func connection(to server: VLESSServer) -> NWConnection {
+        let tcp = NWProtocolTCP.Options()
+        tcp.noDelay = true
+        tcp.connectionTimeout = 10
+        return NWConnection(to: server.address.endpoint, using: NWParameters(tls: nil, tcp: tcp))
+    }
+
     /// Shakes hands with the server, then sends the request with `initialData`.
     public func start(sending initialData: Data) {
+        self.initialData = initialData
+        open()
+    }
+
+    private func open() {
+        let connection = self.connection
         connection.stateUpdateHandler = { [weak self] state in
             switch state {
             case let .failed(error), let .waiting(error):
-                self?.fail(error)
+                guard let self, connection === self.connection else { return }
+                self.retryOrFail(error)
             default:
                 break
             }
         }
         connection.start(queue: queue)
-        self.initialData = initialData
         do {
             let handshake = try REALITYHandshake(server: server)
             self.handshake = handshake
             connection.send(content: handshake.clientHello, completion: .contentProcessed { [weak self] error in
-                guard let error else { return }
-                self?.fail(error)
+                guard let self, let error, connection === self.connection else { return }
+                self.retryOrFail(error)
             })
             readFromServer()
         } catch {
             fail(error)
         }
+    }
+
+    /// A server that hangs up during the handshake has seen nothing of the request yet, so it is
+    /// asked again on a new connection, a moment later, a few times. Anything else fails. True
+    /// when it is trying again.
+    @discardableResult
+    private func retryOrFail(_ error: Error) -> Bool {
+        guard !failed else { return false }
+        let refused: Bool
+        switch error {
+        case TLSError.closedDuringHandshake: refused = true
+        case let NWError.posix(code): refused = [.ECONNRESET, .ECONNABORTED, .EPIPE].contains(code)
+        default: refused = false
+        }
+        guard handshake != nil, refused, attempt < Self.attempts else {
+            failure = failure ?? error
+            fail(error)
+            return false
+        }
+        attempt += 1
+        connection.stateUpdateHandler = nil
+        connection.cancel()
+        connection = Self.connection(to: server)
+        handshake = nil
+        isReading = false
+        reachedEnd = false
+        queue.asyncAfter(deadline: .now() + .milliseconds(200 * (attempt - 1))) { [weak self] in
+            guard let self, !self.failed else { return }
+            self.open()
+        }
+        return true
     }
 
     public func send(_ data: Data, completion: @escaping (Error?) -> Void) {
@@ -145,8 +190,9 @@ public final class VLESSConnection: StreamTunnel {
     private func readFromServer() {
         guard !isReading, !reachedEnd, failure == nil, !failed else { return }
         isReading = true
+        let connection = self.connection
         connection.receive(minimumIncompleteLength: 1, maximumLength: 256 * 1024) { [weak self] content, _, isComplete, error in
-            guard let self, !self.failed else { return }
+            guard let self, !self.failed, connection === self.connection else { return }
             self.isReading = false
             do {
                 if let content, !content.isEmpty {
@@ -154,13 +200,15 @@ public final class VLESSConnection: StreamTunnel {
                 }
                 if isComplete {
                     self.reachedEnd = true
+                    guard self.handshake == nil else { throw TLSError.closedDuringHandshake }
                     guard self.readsDirectly || self.records?.isBetweenRecords == true else { throw TLSError.cutOff }
                 } else if let error {
                     throw error
                 }
             } catch {
-                self.failure = error
-                self.fail(error)
+                if self.retryOrFail(error) {
+                    return
+                }
             }
             if self.handshake != nil {
                 return self.readFromServer()

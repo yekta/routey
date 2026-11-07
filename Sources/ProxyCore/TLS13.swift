@@ -10,6 +10,7 @@ public enum TLSError: LocalizedError {
     case badFinished
     case decryptionFailed
     case cutOff
+    case closedDuringHandshake
 
     public var errorDescription: String? {
         switch self {
@@ -21,6 +22,7 @@ public enum TLSError: LocalizedError {
         case .badFinished: return "The server's TLS handshake didn't verify."
         case .decryptionFailed: return "The server's TLS data couldn't be decrypted."
         case .cutOff: return "The server closed the connection in the middle of a TLS record."
+        case .closedDuringHandshake: return "The server closed the connection before the TLS handshake finished."
         }
     }
 }
