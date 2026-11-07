@@ -12,10 +12,10 @@
           "blend-mode" : "normal",
           "fill" : "automatic",
           "hidden" : false,
-          "image-name" : "route.svg",
-          "name" : "route",
+          "image-name" : "mark.svg",
+          "name" : "mark",
           "position" : {
-            "scale" : 28,
+            "scale" : 30.118,
             "translation-in-points" : [
               0,
               0

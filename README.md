@@ -78,4 +78,4 @@ macOS only loads the proxy extension when it is signed with a Developer ID and i
 
 ## License
 
-MIT. The icon is [Lucide](https://lucide.dev)'s `route`, under the ISC license. The iOS app's TCP/IP stack is [lwIP](https://savannah.nongnu.org/projects/lwip/), under the BSD license (`Sources/CLwIP/COPYING`).
+MIT. The iOS app's TCP/IP stack is [lwIP](https://savannah.nongnu.org/projects/lwip/), under the BSD license (`Sources/CLwIP/COPYING`).

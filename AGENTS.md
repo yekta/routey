@@ -73,7 +73,7 @@ whose packets lwIP turns back into TCP connections, with widgets and a Control C
   from the proxy's totals every second, latency as the time to open a TCP connection to it.
 - `AppModel.swift`: the config, saved in the defaults; the two switches (the proxy runs while
   either is on); the login item; importing and exporting.
-- `StatusItemController.swift`: the menu bar item, drawn from Lucide's `route` (`LucideRoute.swift`),
+- `StatusItemController.swift`: the menu bar item, drawn from Routey's mark (`RouteyMark.swift`),
   dimmed while the proxy isn't connected. A click drops the panel down; a right click shows a
   short menu.
 - `SettingsView.swift`: the panel, a grouped SwiftUI form of stock controls with plain names, with a
@@ -113,15 +113,15 @@ whose packets lwIP turns back into TCP connections, with widgets and a Control C
   and the Control Center toggle.
 - `Shared`: compiled into the app and the widgets: `TunnelControl` (the VPN configuration:
   connecting enables it and turns on demand on, disconnecting turns on demand off first), the
-  config in the app group, the intents, the status line and the route icon as a SwiftUI shape.
+  config in the app group, the intents, the status line and Routey's mark as a SwiftUI shape.
 - `Config`: the entitlements and the extensions' Info.plists.
 - `scripts/testflight.sh`: archives, signs with the Apple Distribution certificate and the
   `routey-ios*` profiles, and uploads to TestFlight.
 
 ### Resources, assets and scripts
 
-- `Resources/AppIcon.icon`: the app icon, made for Icon Composer: Lucide's `route`, white on a
-  dark tile. `assets/favicon.svg` is the same icon as a flat SVG.
+- `Resources/AppIcon.icon`: the app icon, made for Icon Composer: Routey's mark, white on a dark
+  tile. `assets/favicon.svg` is the same icon as a flat SVG.
 - `Resources/App.entitlements`, `Resources/Proxy.entitlements`: what each is allowed; the
   extension is sandboxed. `Resources/Profiles`: their Developer ID provisioning profiles, which
   grant the Network Extension. They aren't secret: they ship inside the app. The `routey-ios*`
@@ -142,7 +142,7 @@ whose packets lwIP turns back into TCP connections, with widgets and a Control C
   the proxy.
 - No logs of any kind, anywhere: nothing about connections is written, not even to the unified log.
 - The app looks like the current macOS: stock AppKit and SwiftUI controls in the system's
-  colours on tinted glass, no colours of our own, the Lucide route for the app.
+  colours on tinted glass, no colours of our own, Routey's mark for the app.
 - Do not leave paragraphs of comments on top of the code. Prefer clear names; keep the comments
   that are needed concise. Comments move with the code.
 - Use guard statement patterns in any code you write.
