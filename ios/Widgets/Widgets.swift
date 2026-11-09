@@ -113,7 +113,7 @@ private struct StatusView: View {
         VStack(alignment: .leading) {
             MarkIcon()
                 .foregroundStyle(isConnected ? .green : .primary)
-                .frame(width: 20, height: 24)
+                .frame(width: 24, height: 24)
                 .widgetAccentable()
             Spacer(minLength: 4)
             Text(entry.name)
